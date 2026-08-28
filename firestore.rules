@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// Money and state-machine authority lives in Cloud Functions (Admin SDK, which
+// bypasses these rules). So these rules govern CLIENT access only, and their job
+// is to DENY every server-owned write: deposit / escrow / payout / matching, and
+// all booking status transitions. The only money-free client write is a
+// recipient creating their own FIFO ticket.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function role() { return isSignedIn() ? request.auth.token.role : ''; }
+
+    // ── users ────────────────────────────────────────────────────────────────
+    // Self-managed profile only. `role` is a custom claim provisioned
+    // server-side (never client-writable — that would be privilege escalation),
+    // and `providerPayeeId` is written only by Cloud Functions.
+    match /users/{userId} {
+      allow read: if isSignedIn() && uid() == userId;
+      allow create: if isSignedIn() && uid() == userId
+        && !request.resource.data.keys().hasAny(['role', 'providerPayeeId']);
+      allow update: if isSignedIn() && uid() == userId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['role', 'providerPayeeId']);
+      allow delete: if false;
+    }
+
+    // ── bookings ─────────────────────────────────────────────────────────────
+    // Read: the parties to the booking, plus agents browsing available pickups.
+    // Write: NONE from clients — booking creation, accept, edibility, matching,
+    // escrow, proof, payout and every status transition are server-only.
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && (
+        resource.data.donorId == uid() ||
+        resource.data.agentId == uid() ||
+        resource.data.recipientId == uid() ||
+        (role() == 'agent' && resource.data.status == 'deposit_held')
+      );
+      allow create, update, delete: if false;
+    }
+
+    // ── tickets (FIFO queue) ─────────────────────────────────────────────────
+    // A recipient may create their own `waiting` ticket and cancel it while it is
+    // still waiting. Matching (`matched` / `matchedBookingId`) is server-only, and
+    // createdAt must be the server timestamp so FIFO ordering can't be forged.
+    match /tickets/{ticketId} {
+      allow read: if isSignedIn() && resource.data.recipientId == uid();
+
+      allow create: if isSignedIn() && role() == 'recipient'
+        && request.resource.data.recipientId == uid()
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.createdAt == request.time
+        && !request.resource.data.keys().hasAny(['matchedBookingId']);
+
+      allow update: if isSignedIn()
+        && resource.data.recipientId == uid()
+        && resource.data.status == 'waiting'
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+
+      allow delete: if false;
+    }
+
+    // ── payment_events (append-only money audit log) ─────────────────────────
+    // Server-only. Contains raw gateway payloads — no client access at all.
+    match /payment_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Deny anything not matched above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

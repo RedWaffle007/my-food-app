@@ -1,0 +1,47 @@
+rules_version = '2';
+
+// Proof-of-receipt and edibility photos. Only the booking's ASSIGNED agent may
+// upload; the parties to the booking may read. Authority is checked by reading
+// the booking doc from Firestore (cross-service rules — must be enabled on the
+// project). Uploads are capped and must be images.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function booking(bookingId) {
+      return firestore.get(/databases/(default)/documents/bookings/$(bookingId)).data;
+    }
+
+    function isAssignedAgent(bookingId) {
+      return request.auth != null && booking(bookingId).agentId == request.auth.uid;
+    }
+
+    function isParty(bookingId) {
+      return request.auth != null && (
+        booking(bookingId).donorId == request.auth.uid ||
+        booking(bookingId).agentId == request.auth.uid ||
+        booking(bookingId).recipientId == request.auth.uid
+      );
+    }
+
+    function isValidImage() {
+      return request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /edibility/{bookingId}/{fileName} {
+      allow read: if isParty(bookingId);
+      allow write: if isAssignedAgent(bookingId) && isValidImage();
+    }
+
+    match /proofs/{bookingId}/{fileName} {
+      allow read: if isParty(bookingId);
+      allow write: if isAssignedAgent(bookingId) && isValidImage();
+    }
+
+    // Deny everything else.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
