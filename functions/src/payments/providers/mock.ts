@@ -67,10 +67,10 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async releasePayout(input: PayoutInput): Promise<PayoutResult> {
+    // Test double: a called release always succeeds (state may live in another
+    // invocation). Retention is modeled by the loop never CALLING this, not here.
     const order = this.orders.get(input.orderId);
-    if (!order) return { transferId: this.id('transfer'), status: 'failed' };
-    // Settle the held agent share exactly once. Retention path never lands here.
-    order.payoutStatus = 'released';
+    if (order) order.payoutStatus = 'released';
     return { transferId: this.id('transfer'), status: 'released' };
   }
 
