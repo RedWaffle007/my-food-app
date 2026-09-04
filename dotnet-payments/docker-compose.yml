@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./src/FoodDonation.Payments.Api
+    ports:
+      - "5090:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Database__Provider: Postgres
+      ConnectionStrings__Default: "Host=db;Port=5432;Database=payments;Username=payments;Password=payments"
+      Payments__Provider: mock
+      # Provide these for the Cashfree sandbox path:
+      # Payments__Provider: cashfree
+      # Cashfree__AppId: ${CASHFREE_APP_ID}
+      # Cashfree__SecretKey: ${CASHFREE_SECRET_KEY}
+      # Shared key for service-to-service auth from the Firebase functions:
+      # ServiceAuth__ApiKey: ${PAYMENTS_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,5 +1,6 @@
 import type { PaymentProvider } from './provider';
 import { CashfreeProvider } from './providers/cashfree';
+import { DotNetPaymentProvider } from './providers/dotnet';
 import { MockPaymentProvider } from './providers/mock';
 
 export type { PaymentProvider } from './provider';
@@ -25,8 +26,12 @@ export function getPaymentProvider(): PaymentProvider {
     case 'cashfree':
       cached = new CashfreeProvider();
       break;
+    case 'dotnet':
+      // Route money operations to the ASP.NET Core payment/ledger microservice.
+      cached = new DotNetPaymentProvider();
+      break;
     default:
-      throw new Error(`Unknown PAYMENTS_PROVIDER: "${which}" (expected "cashfree" or "mock")`);
+      throw new Error(`Unknown PAYMENTS_PROVIDER: "${which}" (expected "cashfree", "mock" or "dotnet")`);
   }
   return cached;
 }
